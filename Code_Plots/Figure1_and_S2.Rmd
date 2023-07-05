@@ -1,0 +1,462 @@
+---
+title: "FCD IIa and IIb - Datasets 1 and 2"
+author: "Isabella"
+date: "2022-08-30"
+toc: true
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+homedir <- Sys.getenv("google_drive_i199200")
+custom_pal <- c("purple", "orange")
+```
+
+```{r libraries, include = F}
+library(tidyverse)
+library(readxl)
+library(paletteer)
+library(reshape)
+library(ggpmisc)
+library(ggstance)
+library(gtools)
+library(kableExtra)
+library(RColorBrewer)
+library(grDevices)
+```
+
+
+
+# Data sets 
+```{r loading_metadata_Dataset1, include = F}
+setwd(paste0(homedir, "Meu Drive/Doutorado/Deconvulucao/data/metadata_padronizada"))
+
+# Dataset 1 is the discovery cohort
+meta_disc <- read_excel("std_meta_FCD_AusFabioFiltered.xlsx")
+
+meta_Aus <- meta_disc %>% filter(is.na(patient))
+meta_Fabio <- meta_disc %>% filter(!is.na(patient))
+```
+
+
+## Kobow et al., 2019
+
+For this data set, we have the following configuration of patients:
+
+```{r, warning = F}
+counts <- meta_Aus %>% count(diagnosis)
+kable(counts, col.names = c("Diagnosis", "Patients"), align = "cc", format = "latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+There are `r counts[counts$diagnosis == "FCD IIa", 2]` FCD IIa patients and `r counts[counts$diagnosis == "FCD IIb", 2]` FCD IIb patients.
+
+For these patients, we have information on the disease, diagnosis, sex, age, onset, duration and lesion localization (lobe and (for the majority) lateralization).
+
+
+## Assis-Mendonça et al., 2023
+
+For this data set, we have the following configuration of patients:
+
+```{r, warning = F}
+counts <- meta_Fabio %>% count(diagnosis)
+kable(counts, col.names = c("Diagnosis", "Patients"), align = "cc", format = "latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+There are `r counts[counts$diagnosis == "FCD IIa", 2]` FCD IIa patients and `r counts[counts$diagnosis == "FCD IIb", 2]` FCD IIb patients.
+
+
+Additionally, for these patients we have information on the disease, diagnosis, sex, age, onset, and duration. For a subset of these patients (5/8), we also have information on the lobe (all Frontal).
+
+
+## Zimmer et al., 2021
+
+```{r loading_metadata_Dataset2, include = F}
+setwd(paste0(homedir, "Meu Drive/Doutorado/Deconvulucao/data/metadata_padronizada"))
+meta_val <- read_excel("std_meta_Holanda.xlsx") %>% filter(diagnosis %in% c("FCD IIa", "FCD IIb"))
+```
+
+
+For this data set, we have the following configuration of patients:
+
+```{r}
+counts <- meta_val %>% count(diagnosis)
+kable(counts, col.names = c("Diagnosis", "Patients"), align = "cc", format = "latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+There are `r counts[counts$diagnosis == "FCD IIa", 2]` FCD IIa patients and `r counts[counts$diagnosis == "FCD IIb", 2]` FCD IIb patients.
+
+For these patients, we have only information about the diagnosis.  
+
+
+# Signatures 
+
+The cell type signatures included here are, as described in Sutton et al., 2022:
+
+\- CA: Count-level exon expression data for adult nuclei from the middle temporal gyrus were acquired from the Human Cell Atlas.
+
+\- LK: Gene expression data for 10,319 human adult frontal cortex nuclei were accessed from Lake et al. 2018
+
+\- NG: 10X Chromium single-nucleus expression data from the adult human post-mortem human prefrontal cortex were accessed from Nagy et al.
+
+\- VL: 10X Chromium for single-nucleus data from the post-mortem adult human brain were accessed from Velmeshev et al.
+
+These were the signatures included in the BrainDeconvShiny platform (Sutton et al., 2022).
+
+
+# CIBERSORTx results 
+
+Analyses were done using CIBERSORTx.
+
+
+## Dataset 1 - Discovery Data Set (Kobow + Assis-Mendonça)
+
+```{r}
+# Reading in results from CIBERSORTx
+signatures <- c("CA", "LK", "NG", "VL")
+
+list_disc <- lapply(signatures, function(sig){
+  
+  read.delim(paste0("../", sig, "/CIBERSORTx_", sig,"_FCD_AusFabioFiltered_Rel.txt")) %>%
+    mutate(signature = sig)
+  
+})
+
+# Creating a single data set with all signatures
+ciber_disc <- bind_rows(list_disc)
+
+# Combine with metadata 
+data_disc <- inner_join(ciber_disc, meta_disc, by = c("Mixture" = "sample"))
+
+
+# Grabbing cell type names
+cell_types <- c("Neurons", "Excitatory", "Inhibitory", "Astrocytes", "Oligodendrocytes", "Microglia", "Endothelia", "OPCs")
+
+
+```
+
+
+```{r}
+# Defining a theme 
+my_theme <- theme_bw() +
+  theme(axis.text = element_text(size=12),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title = element_text(face="plain", colour="black", size=12),
+        panel.background=element_blank(),
+        #panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.text = element_text(face="plain", colour="black", size=12),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        plot.title = element_text(face="plain", colour="black", size=14, hjust = 0)
+  ) 
+```
+
+
+```{r, warning = F}
+# Plotting graphs  and doing statistical tests 
+
+# for every signature
+for (sig in signatures){
+  
+  significant5 <- c()
+  significant10 <- c()
+  
+  print(paste("Using signature", sig))
+  
+  data <- data_disc %>% filter(signature == sig)
+  melted_data <- reshape2::melt(data, measure.vars = cell_types)
+  
+  # Plotting - design 1
+  print(ggplot(melted_data,
+       aes(x = diagnosis, y=value,
+           fill = diagnosis,
+           color = diagnosis)) + 
+  geom_violin(trim = FALSE, alpha = 0.5, na.rm = TRUE) +
+  geom_boxplot(outlier.shape = NA, na.rm = TRUE, color = "black", fill = "white", width = 0.25) +
+  labs(x = "", y = "Proportion") +
+  #stat_summary(fun.y=mean, geom="point", size=2, color="black", na.rm = TRUE) +
+  #scale_y_log10(labels=trans_format('log10', math_format(10^.x))) +
+  scale_fill_manual(values = custom_pal ) +
+  scale_color_manual(values = custom_pal ) +
+  facet_wrap(~ variable, ncol = 4, scales = "free_y") +
+  # expand limits so we can put asterisks for significance levels 
+  scale_y_continuous(expand = c(0.2, 0)) + 
+  my_theme , sep = "\n")
+    
+  
+  # Statistical tests 
+  
+  for (ct in cell_types){ 
+    
+    # print(paste(sig, ct))
+    test <- wilcox.test((data %>% pull(ct)) ~ data$diagnosis)
+    #print(test)
+    
+    p <- test$p.value
+    print(paste0(ct, ": ", p))
+    
+    if (!is.na(p) && p < 0.05){
+      significant5 <- append(significant5, paste(sig, ct, sep = "_"))
+    } else if (!is.na(p) && p < 0.1){
+      significant10 <- append(significant10, paste(sig, ct, sep = "_"))
+    }
+    
+  }
+  
+  print(paste("p < 0.05:", significant5))
+  print(paste("0.05 < p < 0.1:", significant10))
+  print("")
+  
+  
+}
+
+
+```
+
+
+
+## Dataset 2 - Validation cohort (Zimmer)
+
+
+```{r}
+# Load data 
+
+signatures <- c("CA", "LK", "NG", "VL")
+
+list_val <- lapply(signatures, function(sig){
+  
+  read.delim(paste0("../", sig, "/CIBERSORTx_", sig,"_FCD_Holanda_Rel.txt")) %>%
+    mutate(signature = sig)
+  
+})
+
+# Creating a single data set with all signatures
+ciber_val <- bind_rows(list_val)
+
+# Joining with metadata 
+data_val <- inner_join(ciber_val, meta_val, by = c("Mixture" = "sample"))
+
+```
+
+```{r, warning = F}
+# Plotting graphs  and doing statistical tests 
+
+# for every signature
+for (sig in signatures){
+  
+  significant5 <- c()
+  significant10 <- c()
+  
+  print(paste("Using signature", sig))
+  
+  data <- data_val %>% filter(signature == sig)
+  melted_data <- reshape2::melt(data, measure.vars = cell_types)
+  
+  # Plotting - design 1
+  print(ggplot(melted_data,
+       aes(x = diagnosis, y=value,
+           fill = diagnosis,
+           color = diagnosis)) + 
+  geom_violin(trim = FALSE, alpha = 0.5, na.rm = TRUE) +
+  geom_boxplot(outlier.shape = NA, na.rm = TRUE, color = "black", fill = "white", width = 0.25) +
+  labs(x = "", y = "Proportion") +
+  #stat_summary(fun.y=mean, geom="point", size=2, color="black", na.rm = TRUE) +
+  #scale_y_log10(labels=trans_format('log10', math_format(10^.x))) +
+  scale_fill_manual(values = custom_pal ) +
+  scale_color_manual(values = custom_pal ) +
+  facet_wrap(~ variable, ncol = 4, scales = "free_y") +
+  # expand limits so we can put asterisks for significance levels 
+  scale_y_continuous(expand = c(0.2, 0)) + 
+  my_theme , sep = "\n")
+    
+  
+  # Statistical tests 
+  
+  for (ct in cell_types){ 
+    
+    # print(paste(sig, ct))
+    test <- wilcox.test((data %>% pull(ct)) ~ data$diagnosis)
+    #print(test)
+    
+    p <- test$p.value
+    print(paste0(ct, ": ", p))
+    
+    if (!is.na(p) && p < 0.05){
+      significant5 <- append(significant5, paste(sig, ct, sep = "_"))
+    } else if (!is.na(p) && p < 0.1){
+      significant10 <- append(significant10, paste(sig, ct, sep = "_"))
+    }
+  }
+  
+  print(paste("p < 0.05:", significant5))
+  print(paste("0.05 < p < 0.1:", significant10))
+  print("")
+  
+}
+
+
+```
+
+
+
+## Plots for publication - Datasets 1 and 2 together 
+
+
+```{r}
+# Add information about the dataset and join data
+data_disc <- data_disc %>% mutate(cohort = 'Dataset 1')
+data_val <- data_val %>% mutate(cohort = 'Dataset 2')
+data_all <- bind_rows(data_disc, data_val)
+```
+
+
+```{r}
+data <- data_all
+melted_data <- reshape2::melt(data, measure.vars = cell_types)
+
+for (sig in signatures){
+  
+  print(ggplot(melted_data %>% filter(signature == sig),
+       aes(x = cohort, y=value,
+           fill = diagnosis,
+           color = diagnosis)) + 
+  geom_violin(trim = FALSE, na.rm = TRUE,
+              position = position_dodge(0.8), alpha = 0.7) +
+    geom_boxplot(position=position_dodge(0.8), 
+               outlier.shape = NA, na.rm = TRUE, width = 0.25, color = "black") + 
+    stat_summary(fun = median, geom = 'crossbar', color = 'black', width = 0.2,
+                 position = position_dodge(0.8)) +
+  labs(x = "", y = "Proportion", fill = 'Subtype', color = 'Subtype') +
+  #stat_summary(fun.y=mean, geom="point", size=2, color="black", na.rm = TRUE) +
+  #scale_y_log10(labels=trans_format('log10', math_format(10^.x))) +
+  scale_fill_manual(values = c("purple", "orange") ) +
+  scale_color_manual(values = c("purple", "orange") ) +
+  facet_wrap(~ variable, ncol = 4, scales = "free_y") +
+  # expand limits so we can put asterisks for significance levels 
+  scale_y_continuous(expand = c(0.2, 0)) + 
+   theme_bw() +
+  theme(axis.text.x = element_text(size=10),
+        #axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size=12),
+        axis.title.x = element_text(face="plain", colour="black", size=12),
+        axis.title.y = element_text(face="plain", colour="black", size=12),
+        #legend.title=element_blank(),
+        panel.background=element_blank(),
+        #panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.text = element_text(face="plain", colour="black", size=12),
+        legend.title = element_text(face="plain", colour="black", size=12),
+        legend.position = "left",
+        plot.title = element_text(face="plain", colour="black", size=14, hjust = 0), 
+        strip.text.x = element_text(face = 'plain', size = 10)))
+  
+  
+}
+
+
+```
+
+```{r}
+# Exporting plots 
+
+data <- data_all
+melted_data <- reshape2::melt(data, measure.vars = cell_types)
+
+for (sig in signatures){
+  
+  plot <- ggplot(melted_data %>% filter(signature == sig),
+       aes(x = cohort, y=value,
+           fill = diagnosis,
+           color = diagnosis)) + 
+  geom_violin(trim = FALSE, na.rm = TRUE,
+              position = position_dodge(0.8), alpha = 0.7) +
+    geom_boxplot(position=position_dodge(0.8), 
+               outlier.shape = NA, na.rm = TRUE, width = 0.25, color = "black") + 
+    stat_summary(fun = median, geom = 'crossbar', color = 'black', width = 0.2,
+                 position = position_dodge(0.8)) +
+  labs(x = "", y = "Proportion", fill = 'Subtype', color = 'Subtype') +
+  #stat_summary(fun.y=mean, geom="point", size=2, color="black", na.rm = TRUE) +
+  #scale_y_log10(labels=trans_format('log10', math_format(10^.x))) +
+  scale_fill_manual(values = c("purple", "orange") ) +
+  scale_color_manual(values = c("purple", "orange") ) +
+  facet_wrap(~ variable, ncol = 4, scales = "free_y") +
+  # expand limits so we can put asterisks for significance levels 
+  scale_y_continuous(expand = c(0.2, 0)) + 
+   theme_bw() +
+  theme(axis.text.x = element_text(size=11),
+        #axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size=12),
+        axis.title.x = element_text(face="plain", colour="black", size=12),
+        axis.title.y = element_text(face="plain", colour="black", size=12),
+        #legend.title=element_blank(),
+        panel.background=element_blank(),
+        #panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.text = element_text(face="plain", colour="black", size=12),
+        legend.title = element_text(face="plain", colour="black", size=12),
+        legend.position = "left",
+        plot.title = element_text(face="plain", colour="black", size=14, hjust = 0), 
+        strip.text.x = element_text(face = 'plain', size = 10))
+  
+  #ggsave(filename = paste0("plots/rel_", sig, ".svg"), plot = plot, width = 12, height = 8)
+  
+  
+}
+```
+
+## Goodness of fit for both datasets 
+
+```{r}
+
+data <- data_all 
+
+my_theme_gof <- theme_bw() +
+  theme(
+        #axis.ticks.x = element_blank(),
+        axis.text = element_text(face="plain", colour="black", size=12),
+        axis.title = element_text(face="plain", colour="black", size=12, hjust = 0.5),
+        panel.background=element_blank(),
+        #panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.text = element_text(face="plain", colour="black", size=11),
+        legend.title = element_text(face="plain", colour="black", size=12),
+        legend.position = "left",
+        plot.title = element_text(face="plain", colour="black", size=14, hjust = 0))
+
+plot <- ggplot(data, aes(x = signature, y = Correlation, fill = cohort)) +
+  geom_violin(trim = FALSE, na.rm = TRUE, alpha = 0.5, aes(color = cohort)) +
+  geom_boxplot(outlier.shape = NA, na.rm = TRUE, color = 'black',
+               width = 0.2, position = position_dodge(width = 0.9)) + 
+  labs(x = '', y = 'Goodness of Fit', fill = 'Cohort', color = 'Cohort') +
+  my_theme_gof +
+  scale_fill_manual(values = c("#8BB174", "#E0C1B3")) +
+  scale_color_manual(values = c("#8BB174", "#E0C1B3"))
+
+plot  
+
+# Exporting plot 
+#ggsave(filename = "plots/goodness_of_fit_all.svg", plot = plot, width = 12, height = 8)
+```
+
+
+
+```{r}
+save.image(file = "FCDIIaIIb_DiscoveryAndValidationDataSets_clean.RData")
+```
+
+
+<details>
+  <summary>**Session Info**</summary>
+  
+```{r}
+sessionInfo()
+```
+
+</details>
+
+
