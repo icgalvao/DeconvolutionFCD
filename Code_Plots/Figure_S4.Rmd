@@ -1,0 +1,238 @@
+---
+title: "FCD + BrainSpan Controls"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+homedir <- Sys.getenv("google_drive_i199200")
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(readxl)
+library(xlsx)
+library(icesTAF)
+```
+
+# Data sets 
+
+```{r loading_metadata_Dataset1, include = F}
+setwd(paste0(homedir, "Meu Drive/Doutorado/Deconvulucao/data/metadata_padronizada"))
+
+# Dataset 1 is the discovery cohort
+meta_disc <- read_excel("std_meta_FCD_AusFabioFiltered.xlsx")
+
+meta_Aus <- meta_disc %>% filter(is.na(patient))
+meta_Fabio <- meta_disc %>% filter(!is.na(patient))
+
+
+```
+
+
+## Kobow et al., 2019
+
+
+For this data set, we have the following configuration of patients:
+
+```{r, warning = F}
+counts <- meta_Aus %>% count(diagnosis)
+kable(counts, col.names = c("Diagnosis", "Patients"), align = "cc", format = "latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+There are `r counts[counts$diagnosis == "FCD IIa", 2]` FCD IIa patients and `r counts[counts$diagnosis == "FCD IIb", 2]` FCD IIb patients.
+
+
+For this dataset, we have information on the disease, diagnosis, sex, age, onset, duration and lesion localization (lobe and (for the majority) lateralization). 
+
+
+## Assis-Mendonça et al., 2023
+
+For this data set, we have the following configuration of patients:
+
+```{r, warning = F}
+counts <- meta_Fabio %>% count(diagnosis)
+kable(counts, col.names = c("Diagnosis", "Patients"), align = "cc", format = "latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+There are `r counts[counts$diagnosis == "FCD IIa", 2]` FCD IIa patients and `r counts[counts$diagnosis == "FCD IIb", 2]` FCD IIb patients.
+
+
+Additionally, for these patients we have information on the disease, diagnosis, sex, age, onset, and duration. For a subset of these patients (5/8), we also have information on the lobe (all Frontal).
+
+
+## Zimmer et al., 2021
+
+```{r loading_metadata_Dataset2, include = F}
+setwd(paste0(homedir, "Meu Drive/Doutorado/Deconvulucao/data/metadata_padronizada"))
+meta_val <- read_excel("std_meta_Holanda.xlsx") %>% filter(diagnosis %in% c("FCD IIa", "FCD IIb"))
+```
+
+
+For this data set, we have the following configuration of patients:
+
+```{r}
+counts <- meta_val %>% count(diagnosis)
+kable(counts, col.names = c("Diagnosis", "Patients"), align = "cc", format = "latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+There are `r counts[counts$diagnosis == "FCD IIa", 2]` FCD IIa patients and `r counts[counts$diagnosis == "FCD IIb", 2]` FCD IIb patients.
+
+
+For these patients, we have only information on the diagnosis.  
+
+
+## Controls - BrainSpan
+
+```{r}
+# Load metadata 
+
+setwd(paste0(homedir, "Meu Drive/Doutorado/Deconvulucao/data/metadata_padronizada"))
+meta_BS <- read_excel("std_meta_BrainSpan_FCD_Controls.xlsx") 
+```
+
+
+
+## Joining all of the metadata
+
+```{r}
+# bind and add info on the dataset
+meta <- bind_rows(meta_disc %>% mutate(cohort = "Dataset 1"), 
+                 meta_val %>% mutate(cohort = "Dataset 2"), 
+                 meta_BS %>% mutate(cohort = "Control"))
+```
+
+
+
+# Signatures 
+
+We'll look only at the signature CA first. 
+
+```{r}
+# Load data 
+
+setwd("../CA")
+
+ciber <- read.delim("CIBERSORTx_CA_FCD_all_Controls_BrainSpan_Rel.txt")
+
+
+```
+
+
+
+# Plotting it all together 
+
+```{r}
+# Join with metadata 
+data <- ciber %>% inner_join(meta, by = c("Mixture" = "sample")) %>% 
+  mutate(cohort =  factor(cohort, levels = c("Dataset 1", "Dataset 2", "Control")))
+
+
+cell_types <- c("Neurons", "Excitatory", "Inhibitory", "Astrocytes", 
+                "Oligodendrocytes", "Microglia", "Endothelia", "OPCs")
+
+```
+
+```{r, warning = F}
+
+# We are using only the CA signature 
+
+
+## Without quantile normalization 
+
+
+melted_data <- reshape2::melt(data, measure.vars = cell_types)
+
+plot <- ggplot(melted_data,
+     aes(x = cohort, y=value,
+         fill = diagnosis,
+         color = diagnosis)) +
+geom_violin(trim = FALSE, na.rm = TRUE,
+            position = position_dodge(0.8), alpha = 0.7) +
+  geom_boxplot(position=position_dodge(0.8),
+             outlier.shape = NA, na.rm = TRUE, width = 0.25, color = "black") +
+  stat_summary(fun = median, geom = 'crossbar', color = 'black', width = 0.2,
+               position = position_dodge(0.8)) +
+labs(x = "", y = "Proportion", fill = 'Subtype', color = 'Subtype') +
+#stat_summary(fun.y=mean, geom="point", size=2, color="black", na.rm = TRUE) +
+#scale_y_log10(labels=trans_format('log10', math_format(10^.x))) +
+scale_fill_manual(values = c("lightblue", "purple", "orange") ) +
+scale_color_manual(values = c("lightblue", "purple", "orange") ) +
+facet_wrap(~ variable, ncol = 4, scales = "free_y") +
+# expand limits so we can put asterisks for significance levels
+scale_y_continuous(expand = c(0.2, 0)) +
+ theme_bw() +
+theme(axis.text.x = element_text(size=11),
+      #axis.ticks.x = element_blank(),
+      axis.text.y = element_text(size=12),
+      axis.title.x = element_text(face="plain", colour="black", size=12),
+      axis.title.y = element_text(face="plain", colour="black", size=12),
+      #legend.title=element_blank(),
+      panel.background=element_blank(),
+      #panel.border=element_blank(),
+      panel.grid.major=element_blank(),
+      legend.text = element_text(face="plain", colour="black", size=12),
+      legend.title = element_text(face="plain", colour="black", size=12),
+      legend.position = "left",
+      plot.title = element_text(face="plain", colour="black", size=14, hjust = 0),
+      strip.text.x = element_text(face = 'plain', size = 10))
+
+#print(plot)
+
+#ggsave(filename = "plots_FewerControls_all/rel_CA_all_noQN.svg", plot = plot, width = 12, height = 6)
+
+
+# Statistical tests
+
+for (dat in c("Dataset 1", "Dataset 2")){
+  
+  data_test <- melted_data %>% filter(cohort %in% c(dat, "Control"))
+  
+  res <- lapply(unique(melted_data$variable), function(pop){
+  
+    # Kruskal-Wallis test 
+    
+    data_test_ct <- data_test %>% filter(variable %in% pop)
+    
+    kruskal.test(value ~ diagnosis, data = data_test_ct)
+    
+    # subset doesn't work here
+    pwtest <- pairwise.wilcox.test(data_test_ct$value, data_test_ct$diagnosis, 
+                         p.adjust.method = "none",
+                         paired = F, 
+                         exact = TRUE)
+      
+    table <- broom::tidy(pwtest)
+    
+    })
+  
+  names(res) <- unique(melted_data$variable)
+
+  
+  # Exporting 
+
+#   lapply(names(res), function(pop){
+# 
+#      write.xlsx(as.data.frame(res[[pop]]),
+#            file = paste0("p_values_FewerControls_all/rel_CA_all_noQN_pvalues_pairwise_wilcox.xlsx"),
+#            row.names = F,
+#            sheetName = paste(pop, str_remove(dat, "ataset "), sep = " - "),
+#            append = T)
+# 
+# })
+
+}
+
+
+```
+
+```{r}
+# Save workspace 
+save.image("FCD_AusFabiFilteredHoalnda_BrainSpan_Controls_all_together_clean.RData")
+```
+
